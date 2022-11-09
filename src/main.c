@@ -27,15 +27,14 @@ __code uint16_t __at(_CONFIG) __configword = _INTRC_OSC_NOCLKOUT & _WDTE_OFF & _
 
 #define UART_TX_TRIS    TRISIO0
 #define UART_TX         GP0
-#define UART_TX_DELAY   18 //~2400 baudrate
 
 #define TICK_PERIOD       1e-3   /*1mS period must be capable of resolution all procces. */
 #define ADC_PERIOD        10e-3  /*10mS*/
-#define CALC_PERIOD       100e-3 /*100mS*/
+#define CALC_PERIOD       50e-3 /*100mS*/
 #define PWM_PERIOD        1e-3   /*1mS*/
 #define LED_PERIOD        2e-3   /*2mS*/
-#define UART_BIT_PERIOD   1e-3   /*1mS(~1200baud)*/
-#define PRINT_PERIOD      250e-3 /*250mS*/  
+#define UART_BIT_PERIOD   1e-3   /*1mS(~1000baudrate)*/
+#define PRINT_PERIOD      250e-3 /*250mS*/
 #define TICK_COUNT        (PRINT_PERIOD / TICK_PERIOD) // must be max. process period  ???????????????
 
 typedef enum
@@ -48,7 +47,7 @@ typedef enum
     PRINT
 } Procces_t; // sizeof ??
 
-const unsigned Period_Table[] = // sizeof ??
+const uint8_t PeriodTable[] = // sizeof ??
 {
     ADC_PERIOD / TICK_PERIOD,
     CALC_PERIOD / TICK_PERIOD,
@@ -59,37 +58,56 @@ const unsigned Period_Table[] = // sizeof ??
 };
 
 bool Event = false;
-uint8_t TimerTick = 0;
 Procces_t Procces;
+uint8_t TimeTable[ASIZE(PeriodTable)] = {};
+char UartBuffer[24];
 /**********************************/
 /**********************************/
 /**********************************/
-void delay(volatile uint16_t iterations)
+void Transmit_Bit(void)
 {
-    for(uint16_t i = 0; i < iterations; i++)
+    static uint8_t bit = 0;
+    static uint8_t index = 0;
+    uint8_t byte = UartBuffer[index];
+    if(byte != '\0')
     {
-        __asm nop __endasm;
+        switch(bit)
+        {
+            case 0:
+                UART_TX = 0;
+                bit++;
+                break;
+            case 1:
+            case 2:
+            case 3:
+            case 4:
+            case 5:
+            case 6:
+            case 7:
+            case 8:
+                if(byte & (0x1 << (bit - 1)))
+                {
+                    UART_TX = 1;
+                }
+                else
+                {
+                    UART_TX = 0;
+                }
+                bit++;
+                break;
+            case 9:
+            default:
+                UART_TX = 1;
+                bit = 0;
+                UartBuffer[index] = 0;
+                index++;
+                break;
+        }
     }
-}
-/**********************************/
-void UART_Transmit(const char DataValue)
-{
-    delay(UART_TX_DELAY);
-    UART_TX = 0;
-    delay(UART_TX_DELAY);
-    for(unsigned char i = 0; i < 8; i++)
+    else
     {
-        if(((DataValue >> i) & 0x1) == 0x1)
-        {
-            UART_TX = 1;
-        }
-        else
-        {
-            UART_TX = 0;
-        }
-        delay(UART_TX_DELAY);
+        index = 0;
     }
-    UART_TX = 1;
 }
 /**********************************/
 void InitIO(void)
@@ -108,9 +126,9 @@ void InitTMR0(void)
 {
     T0CS   = 0;     // Fosc/4 kullanilacak
     PSA    = 0;     // Timer0 icin prescaler
-    PS0    = 0;     // (Fosc/4)/8 olarak ayarlaniyor!
-    PS1    = 1;
-    PS2    = 0;
+    PS0    = 1;     // (Fosc/4)/8 olarak ayarlaniyor!
+    PS1    = 0;
+    PS2    = 1;
     TMR0IF = 0;
     TMR0IE = 1;
 }
@@ -137,60 +155,92 @@ void main(void)
     InitTMR0();
     InitADC();
 
+    // UART_Transmit('R');
+    // UART_Transmit('S');
+    // UART_Transmit('T');
+    // UART_Transmit('\n');
+
+    UartBuffer[0] = '\0';
+    Transmit_Bit();
+
     PEIE = 1;
     GIE = 1;
-
-    UART_Transmit(0xAA);
-    UART_Transmit(0x55);
-    UART_Transmit(0xA5);
-
-    //Led_State(SUCCES);
 
     while(1)
     {
         if(Event)
         {
-            for(; Procces < ASIZE(Period_Table); Procces++)
+            LED_PIN = 1;
+            for(Procces = 0; Procces < ASIZE(PeriodTable); Procces++)
             {
-                if((TimerTick % Period_Table[Procces]) == 0)
+                if(TimeTable[Procces] == 0)
                 {
+                    TimeTable[Procces] = PeriodTable[Procces];
                     break;
                 }
+                TimeTable[Procces]--;
             }
             switch(Procces)
             {
                 case ADC:
+                    // UART_Transmit('A');
+                    // UART_Transmit('\r');
+                    // UART_Transmit('\n');
                     break;
                 case CALC:
+                    // UART_Transmit('C');
+                    // UART_Transmit('\r');
+                    // UART_Transmit('\n');
                     break;
                 case PWM:
+                    //  UART_Transmit('W');
+                    //  UART_Transmit('\r');
+                    //  UART_Transmit('\n');
                     break;
                 case LED:
                     break;
                 case UART_BIT:
+                    Transmit_Bit();
                     break;
                 case PRINT:
-                    break;                    
+                    UartBuffer[0] = 'A';
+                    UartBuffer[1] = 'D';
+                    UartBuffer[2] = 'C';
+                    UartBuffer[3] = ':';
+                    UartBuffer[4] = '1';
+                    UartBuffer[5] = '0';
+                    UartBuffer[6] = '2';
+                    UartBuffer[7] = '4';
+                    UartBuffer[8] = '\r';
+                    UartBuffer[9] = '\n';                    
+                    UartBuffer[10] = 'P';
+                    UartBuffer[11] = 'W';
+                    UartBuffer[12] = 'M';
+                    UartBuffer[13] = ':';
+                    UartBuffer[14] = '%';
+                    UartBuffer[15] = '1';
+                    UartBuffer[16] = '0';
+                    UartBuffer[17] = '0';
+                    UartBuffer[18] = '\r';
+                    UartBuffer[19] = '\n';
+                    UartBuffer[20] = '\0';
+                    break;
                 default:
-                    Procces = 0;
                     Event = false;
-                    if(++TimerTick >= TICK_COUNT)
-                    {
-                        TimerTick = 0;
-                    }
                     break;
             }
+            LED_PIN = 0;
         }
     }
 }
 /**********************************/
 /**********************************/
 /**********************************/
-void TC0_ISR(void) __interrupt(0)
+void TC0_ISR(void) __interrupt(4)
 {
     //if(TMR0IF)
     {
-        TMR0    = -((125.0 / 1e-3) * TICK_PERIOD);
+        TMR0    = -((31.25 / 1e-3) * TICK_PERIOD);
         TMR0IF  = 0;
         Event = true;
     }
