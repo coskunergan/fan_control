@@ -33,7 +33,7 @@ __code uint16_t __at(_CONFIG) __configword = _INTRC_OSC_NOCLKOUT & _WDTE_OFF & _
 #define CALC_PERIOD       50e-3 /*100mS*/
 #define PWM_PERIOD        1e-3   /*1mS*/
 #define LED_PERIOD        2e-3   /*2mS*/
-#define UART_BIT_PERIOD   1e-3   /*1mS(~1000baudrate)*/
+#define UART_BIT_PERIOD   2e-3   /*2mS(~490baudrate)*/
 #define PRINT_PERIOD      250e-3 /*250mS*/
 #define TICK_COUNT        (PRINT_PERIOD / TICK_PERIOD) // must be max. process period  ???????????????
 
@@ -61,52 +61,67 @@ bool Event = false;
 Procces_t Procces;
 uint8_t TimeTable[ASIZE(PeriodTable)] = {};
 char UartBuffer[24];
+uint8_t Uart_Gone_Index = 0;
+uint8_t Uart_Going_Index = 0;
 /**********************************/
 /**********************************/
+/**********************************/
+void Transmit_Uart(const uint8_t *ptr)
+{
+    while(*ptr != '\0')
+    {
+        UartBuffer[Uart_Going_Index++] = *ptr++;
+        if(Uart_Going_Index == (sizeof(UartBuffer) - 1))
+        {
+            Uart_Going_Index = 0;
+        }
+    }
+}
 /**********************************/
 void Transmit_Bit(void)
 {
     static uint8_t bit = 0;
-    static uint8_t index = 0;
-    uint8_t byte = UartBuffer[index];
-    if(byte != '\0')
+    static uint8_t byte;
+
+    if(Uart_Gone_Index == Uart_Going_Index)
     {
-        switch(bit)
-        {
-            case 0:
-                UART_TX = 0;
-                bit++;
-                break;
-            case 1:
-            case 2:
-            case 3:
-            case 4:
-            case 5:
-            case 6:
-            case 7:
-            case 8:
-                if(byte & (0x1 << (bit - 1)))
-                {
-                    UART_TX = 1;
-                }
-                else
-                {
-                    UART_TX = 0;
-                }
-                bit++;
-                break;
-            case 9:
-            default:
-                UART_TX = 1;
-                bit = 0;
-                UartBuffer[index] = 0;
-                index++;
-                break;
-        }
+        return;
     }
-    else
+    switch(bit)
     {
-        index = 0;
+        case 0:
+            UART_TX = 0;
+            bit++;
+            byte = UartBuffer[Uart_Gone_Index];
+            break;
+        case 1:
+        case 2:
+        case 3:
+        case 4:
+        case 5:
+        case 6:
+        case 7:
+        case 8:
+            if(byte & (0x1 << (bit - 1)))
+            {
+                UART_TX = 1;
+            }
+            else
+            {
+                UART_TX = 0;
+            }
+            bit++;
+            break;
+        case 9:
+        default:
+            UART_TX = 1;
+            bit = 0;
+            Uart_Gone_Index++;
+            if(Uart_Gone_Index == (sizeof(UartBuffer) - 1))
+            {
+                Uart_Gone_Index = 0;
+            }
+            break;
     }
 }
 /**********************************/
@@ -183,19 +198,10 @@ void main(void)
             switch(Procces)
             {
                 case ADC:
-                    // UART_Transmit('A');
-                    // UART_Transmit('\r');
-                    // UART_Transmit('\n');
                     break;
                 case CALC:
-                    // UART_Transmit('C');
-                    // UART_Transmit('\r');
-                    // UART_Transmit('\n');
                     break;
                 case PWM:
-                    //  UART_Transmit('W');
-                    //  UART_Transmit('\r');
-                    //  UART_Transmit('\n');
                     break;
                 case LED:
                     break;
@@ -203,27 +209,16 @@ void main(void)
                     Transmit_Bit();
                     break;
                 case PRINT:
-                    UartBuffer[0] = 'A';
-                    UartBuffer[1] = 'D';
-                    UartBuffer[2] = 'C';
-                    UartBuffer[3] = ':';
-                    UartBuffer[4] = '1';
-                    UartBuffer[5] = '0';
-                    UartBuffer[6] = '2';
-                    UartBuffer[7] = '4';
-                    UartBuffer[8] = '\r';
-                    UartBuffer[9] = '\n';                    
-                    UartBuffer[10] = 'P';
-                    UartBuffer[11] = 'W';
-                    UartBuffer[12] = 'M';
-                    UartBuffer[13] = ':';
-                    UartBuffer[14] = '%';
-                    UartBuffer[15] = '1';
-                    UartBuffer[16] = '0';
-                    UartBuffer[17] = '0';
-                    UartBuffer[18] = '\r';
-                    UartBuffer[19] = '\n';
-                    UartBuffer[20] = '\0';
+                    static bool toggle_print = false;
+                    toggle_print = !toggle_print;
+                    if(toggle_print)
+                    {
+                        Transmit_Uart("ADC:1024\r\n");
+                    }
+                    else
+                    {
+                        Transmit_Uart("PWM:%100\r\n");
+                    }
                     break;
                 default:
                     Event = false;
