@@ -13,8 +13,10 @@
 __code uint16_t __at(_CONFIG) __configword = _INTRC_OSC_NOCLKOUT & _WDTE_OFF & _PWRTE_OFF & _MCLRE_OFF & _CP_OFF & _BOREN_ON & _FCMEN_OFF & _IESO_OFF;
 
 #define ASIZE(x) (sizeof(x)/sizeof(*x)) // K.Kurt
-#define MIN(a,b) (((a)<(b))?(a):(b)) // ??
-#define MAX(a,b) (((a)>(b))?(a):(b))
+
+#define ADC_MIN      128
+#define ADC_MAX      250
+#define ADC_SAMPLE_COUNT 32
 
 #define ADC_PIN         GP4
 #define ADC_TRIS        TRISIO4
@@ -29,19 +31,22 @@ __code uint16_t __at(_CONFIG) __configword = _INTRC_OSC_NOCLKOUT & _WDTE_OFF & _
 #define UART_TX         GP0
 
 #define TICK_PERIOD       1e-3   /*1mS period must be capable of resolution all procces. */
-#define ADC_PERIOD        10e-3  /*10mS*/
-#define CALC_PERIOD       50e-3 /*100mS*/
-#define PWM_PERIOD        1e-3   /*1mS*/
+#define ADC_PERIOD        5e-3   /*10mS*/
+#define RMS_PERIOD        250e-3 /*50mS*/
 #define LED_PERIOD        2e-3   /*2mS*/
 #define UART_BIT_PERIOD   2e-3   /*2mS(~490baudrate)*/
 #define PRINT_PERIOD      250e-3 /*250mS*/
-#define TICK_COUNT        (PRINT_PERIOD / TICK_PERIOD) // must be max. process period  ???????????????
+
+typedef enum
+{
+    SUCCES = 0,
+    ERROR
+} State_t;
 
 typedef enum
 {
     ADC = 0,
-    CALC,
-    PWM,
+    RMS,
     LED,
     UART_BIT,
     PRINT
@@ -50,8 +55,7 @@ typedef enum
 const uint8_t PeriodTable[] = // sizeof ??
 {
     ADC_PERIOD / TICK_PERIOD,
-    CALC_PERIOD / TICK_PERIOD,
-    PWM_PERIOD / TICK_PERIOD,
+    RMS_PERIOD / TICK_PERIOD,
     LED_PERIOD / TICK_PERIOD,
     UART_BIT_PERIOD / TICK_PERIOD,
     PRINT_PERIOD / TICK_PERIOD
@@ -60,9 +64,13 @@ const uint8_t PeriodTable[] = // sizeof ??
 bool Event = false;
 Procces_t Procces;
 uint8_t TimeTable[ASIZE(PeriodTable)] = {};
-char UartBuffer[24];
+char UartBuffer[16];
 uint8_t Uart_Gone_Index = 0;
 uint8_t Uart_Going_Index = 0;
+State_t State = SUCCES;
+uint16_t ADC_Value = 0;
+uint32_t ADC_Sum = 0;
+uint8_t PWM_Value = 0;
 /**********************************/
 /**********************************/
 /**********************************/
@@ -125,6 +133,109 @@ void Transmit_Bit(void)
     }
 }
 /**********************************/
+// void Led_State(State_t state)
+// {
+//     static uint8_t dimmer = 1;
+//     static bool flip = false;
+//     static uint8_t count = 0;
+//     static uint8_t step = 0;
+// #define LED_SPEED 15
+//     if(state == ERROR)
+//     {
+//         if(++count == 50)
+//         {
+//             count = 0;
+//             LED_PIN = !LED_PIN;
+//         }
+//     }
+//     else
+//     {
+//         if(++count == 10)
+//         {
+//             LED_PIN = 1;
+//             count = 0;
+//             step += dimmer;
+//             if(step > LED_SPEED)
+//             {
+//                 step = 0;
+//                 if(flip)
+//                 {
+//                     if(--dimmer == 1)
+//                     {
+//                         flip = false;
+//                     }
+//                 }
+//                 else
+//                 {
+//                     if(++dimmer == 10)
+//                     {
+//                         flip = true;
+//                     }
+//                 }
+//             }
+//         }
+//         if(count == dimmer)
+//         {
+//             LED_PIN = 0;
+//         }
+//     }
+// }
+/**********************************/
+// void Convert_DecToASCI(uint16_t val, char *ptr)
+// {
+//     *ptr = (val / 1000);
+//     if(*ptr)
+//     {
+//         *ptr += '0';
+//         ptr++;
+//     }
+//     *ptr = (val / 100) % 10;
+//     *ptr += '0';
+//     ptr++;
+//     *ptr = (val / 10) % 10;
+//     *ptr += '0';
+//     ptr++;
+//     *ptr = val % 10;
+//     *ptr += '0';
+//     ptr++;
+//     *ptr = '\0';
+// }
+/**********************************/
+void RMS_Calc(void)
+{
+    ADC_Value = (ADC_Value + ((ADC_Sum / ADC_SAMPLE_COUNT) / ADC_Value)) / 2;
+    if(ADC_Value > ADC_MAX)
+    {
+        PWM_Value = 100;
+        CCPR1L = 255;
+    }
+    else if(ADC_Value < ADC_MIN)
+    {
+        PWM_Value = 0;
+        CCPR1L = 0;
+    }
+    else
+    {
+        PWM_Value = ADC_Value / ((ADC_MAX - ADC_MIN) / 100);
+        CCPR1L = ADC_Value / ((ADC_MAX - ADC_MIN) / 255);
+    }
+}
+/**********************************/
+void Adc_Read(void)
+{
+    uint16_t adc;
+    //--------
+    while(GO_DONE);
+    adc = ADRESH;
+    adc <<= 8;
+    adc |= ADRESL;
+    GO_DONE = 1;
+    //---------
+    adc >>= 2;
+    ADC_Sum -= ADC_Sum / ADC_SAMPLE_COUNT;
+    ADC_Sum += (uint16_t)adc * adc;
+}
+/**********************************/
 void InitIO(void)
 {
     ANSEL = 0x00;
@@ -135,6 +246,22 @@ void InitIO(void)
     LED_PIN = 0;
     UART_TX_TRIS = 0;
     UART_TX = 1;
+    PWM_TRIS = 0;
+    PWM_PIN = 0;
+}
+/**********************************/
+void InitTMR2Pwm(void)
+{
+    T2CKPS0 = 0;
+    T2CKPS1 = 0;
+    TOUTPS0 = 0;
+    TOUTPS1 = 0;
+    TOUTPS2 = 0;
+    TOUTPS3 = 0;
+    TMR2ON = 1;
+    PR2 = 255;
+    CCP1CON = 0x0C;
+    CCPR1L = 128;
 }
 /**********************************/
 void InitTMR0(void)
@@ -151,7 +278,7 @@ void InitTMR0(void)
 void InitADC(void)
 {
     ANSEL  = 0x38;                 // AN3 girisi ADC
-    ADCON0 = 0x0D;
+    ADCON0 = 0x8D;
 }
 /**********************************/
 void InitOSC(void)
@@ -168,15 +295,8 @@ void main(void)
     InitOSC();
     InitIO();
     InitTMR0();
+    InitTMR2Pwm();
     InitADC();
-
-    // UART_Transmit('R');
-    // UART_Transmit('S');
-    // UART_Transmit('T');
-    // UART_Transmit('\n');
-
-    UartBuffer[0] = '\0';
-    Transmit_Bit();
 
     PEIE = 1;
     GIE = 1;
@@ -185,8 +305,7 @@ void main(void)
     {
         if(Event)
         {
-            LED_PIN = 1;
-            for(Procces = 0; Procces < ASIZE(PeriodTable); Procces++)
+            for(; Procces < ASIZE(PeriodTable); Procces++)
             {
                 if(TimeTable[Procces] == 0)
                 {
@@ -198,12 +317,13 @@ void main(void)
             switch(Procces)
             {
                 case ADC:
+                    Adc_Read();
                     break;
-                case CALC:
-                    break;
-                case PWM:
+                case RMS:
+                    RMS_Calc();
                     break;
                 case LED:
+                    //Led_State(State);
                     break;
                 case UART_BIT:
                     Transmit_Bit();
@@ -213,18 +333,37 @@ void main(void)
                     toggle_print = !toggle_print;
                     if(toggle_print)
                     {
-                        Transmit_Uart("ADC:1024\r\n");
+                        // Transmit_Uart("ADC:");
+                        char buffer[5];
+                        // Convert_DecToASCI(ADC_Value, buffer);
+                        // Transmit_Uart(buffer);
+                        // Transmit_Uart("\r\n");
+
+                        buffer[0] = ADC_Value;
+                        buffer[1] = PWM_Value;
+                        buffer[2] = 0;
+                        Transmit_Uart(buffer);
+                        Transmit_Uart("\r\n");
+
                     }
                     else
                     {
-                        Transmit_Uart("PWM:%100\r\n");
+                        // // Transmit_Uart("PWM:%");
+                        // char buffer[4];
+                        // // Convert_DecToASCI(PWM_Value, buffer);
+                        // // Transmit_Uart(buffer);
+                        // // Transmit_Uart("\r\n");
+                        // buffer[0] = PWM_Value;
+                        // buffer[1] = 0;
+                        // Transmit_Uart(buffer);
+                        // Transmit_Uart("\r\n");
                     }
                     break;
                 default:
+                    Procces = 0;
                     Event = false;
                     break;
             }
-            LED_PIN = 0;
         }
     }
 }
