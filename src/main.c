@@ -12,8 +12,8 @@
 
 __code uint16_t __at(_CONFIG) __configword = _INTRC_OSC_NOCLKOUT & _WDTE_ON & _PWRTE_OFF & _MCLRE_OFF & _CP_OFF & _BOREN_ON & _FCMEN_OFF & _IESO_OFF;
 
-#define ADC_MIN      300
-#define ADC_MAX      800
+#define ADC_MIN      130
+#define ADC_MAX      220
 #define RMS_SAMPLE_COUNT 256
 
 #define ADC_PIN         GP4
@@ -42,9 +42,9 @@ const uint8_t PeriodTable[] =
 };
 uint8_t TimeTable[sizeof(PeriodTable)] = {0};
 bool Event = false;
-uint16_t ADC_Value;
+uint32_t ADC_Value;
 uint16_t ADC_Raw;
-uint32_t ADC_Sum = 0;
+uint32_t ADC_Sum = ADC_MAX * ADC_MAX * RMS_SAMPLE_COUNT;
 /**********************************/
 /**********************************/
 /**********************************/
@@ -58,7 +58,7 @@ void Read_ADC(void)
     GO_DONE = 1;
     //---------
     ADC_Sum -= ADC_Sum / RMS_SAMPLE_COUNT;
-    ADC_Sum += (uint32_t)ADC_Raw * ADC_Raw;
+    ADC_Sum += (uint32_t)ADC_Raw * (uint32_t)ADC_Raw;
 }
 /**********************************/
 void RMS_Calc(void)
@@ -67,21 +67,25 @@ void RMS_Calc(void)
 
     if(ADC_Value > ADC_MAX)
     {
-        LED_PIN = 1;
+        LED_PIN = 0;
         TMR2ON = 0; // PWM stop
-        PWM_PIN = 1; 
+        CCP1CON = 0;
+        PWM_PIN = 0;
     }
-    else if(ADC_Value < ADC_MIN)
+    else if(ADC_Value <= ADC_MIN)
     {
         LED_PIN = 1;
         TMR2ON = 0; // PWM stop
-        PWM_PIN = 0;
+        CCP1CON = 0;
+        PWM_PIN = 1;
     }
     else
     {
+        CCPR1L = 255 - ((ADC_MAX - ADC_MIN) - (ADC_Value - ADC_MIN));
+        //CCPR1L = (((ADC_Value - ADC_MIN) * 256UL) / (ADC_Value - ADC_MIN)) - 1;
         LED_PIN = !LED_PIN;
+        CCP1CON = 0xF;
         TMR2ON = 1; // PWM start
-        CCPR1L = ((ADC_Value - ADC_MIN) * 64) / (((ADC_MAX - ADC_MIN) * 64) / 256);
     }
 }
 /**********************************/
