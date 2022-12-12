@@ -42,7 +42,7 @@ const uint8_t PeriodTable[] =
 };
 uint8_t TimeTable[sizeof(PeriodTable)] = {0};
 bool Event = false;
-uint32_t ADC_Value;
+uint32_t ADC_Value = 0;
 uint16_t ADC_Raw;
 uint32_t ADC_Sum = ADC_MAX * ADC_MAX * RMS_SAMPLE_COUNT;
 /**********************************/
@@ -63,6 +63,10 @@ void Read_ADC(void)
 /**********************************/
 void RMS_Calc(void)
 {
+    if(ADC_Value == 0)
+    {
+        ADC_Value = 1;
+    }
     ADC_Value = (ADC_Value + ((ADC_Sum / RMS_SAMPLE_COUNT) / ADC_Value)) / 2;
 
     if(ADC_Value > ADC_MAX)
